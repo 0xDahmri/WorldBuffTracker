@@ -54,30 +54,11 @@ def _save_settings() -> None:
 
 settings = _load_settings()
 
-# ---------------------------------------------------------------------------
-# Icon mapping  –  filenames served from ICON_BASE_URL in .env
-# e.g. https://raw.githubusercontent.com/you/WorldBuffTracker/main
-# ---------------------------------------------------------------------------
-BUFF_ICONS: dict[str, str] = {
-    "zul'gurub": "zulgurub.png",
-    "zg":        "zulgurub.png",
-    "onyxia":    "onyxia.png",
-    "ony":       "onyxia.png",
-    "rend":      "rend.png",
-    "alliance":  "alliance.png",
-    "horde":     "horde.png",
-}
-
-
-def _icon_url(buff_name: str) -> Optional[str]:
-    """Return the icon URL for a buff, or None if ICON_BASE_URL is not set."""
+def _thumbnail_url() -> Optional[str]:
+    """Return the static Onyxia icon URL, or None if ICON_BASE_URL is not configured."""
     if not config.ICON_BASE_URL:
         return None
-    lower = buff_name.lower()
-    for key, filename in BUFF_ICONS.items():
-        if key in lower or lower in key:
-            return f"{config.ICON_BASE_URL}/{filename}"
-    return None
+    return f"{config.ICON_BASE_URL}/onyxia.png"
 
 # ---------------------------------------------------------------------------
 # Bot setup
@@ -129,7 +110,7 @@ def _summary_embed(buffs: list[BuffTimer], title: str) -> discord.Embed:
     for buff in sorted(buffs, key=lambda b: b.seconds_remaining):
         label = "🟢 Active now" if buff.seconds_remaining <= 0 else f"⏳ {buff.formatted_time}"
         embed.add_field(name=buff.name, value=label, inline=True)
-    url = _icon_url(buffs[0].name)
+    url = _thumbnail_url()
     if url:
         embed.set_thumbnail(url=url)
     return embed
@@ -142,7 +123,7 @@ def _alert_embed(buff: BuffTimer) -> discord.Embed:
         color=discord.Color.orange(),
         timestamp=datetime.now(timezone.utc),
     )
-    url = _icon_url(buff.name)
+    url = _thumbnail_url()
     if url:
         embed.set_thumbnail(url=url)
     return embed

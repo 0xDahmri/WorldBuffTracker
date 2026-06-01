@@ -5,10 +5,11 @@ A Discord bot that scrapes [whenbuff.com](https://www.whenbuff.com/) and posts w
 ## Features
 
 - **Imminent alerts** — pings your channel when a buff is going out within a configurable window
-- **Periodic summaries** — posts a full timer embed on a schedule
-- **`/buffs` command** — on-demand timer lookup
-- **`/config` commands** — change check and summary intervals from Discord without restarting the bot
-- **Buff icons** — attaches the correct icon thumbnail to each embed
+- **Periodic summaries** — posts all of today's remaining buffs on a schedule
+- **`/buffs` command** — on-demand timer lookup showing all upcoming buffs today
+- **`/channel` commands** — manage multiple alert channels from Discord
+- **`/config` commands** — change check and summary intervals without restarting the bot
+- **Buff icon** — Onyxia icon thumbnail on every embed (served from `ICON_BASE_URL`)
 
 ## Requirements
 
@@ -49,16 +50,20 @@ nano .env
 | Variable | Description |
 |---|---|
 | `DISCORD_TOKEN` | Bot token from the Discord Developer Portal |
-| `CHANNEL_ID` | ID of the channel to post alerts in |
+| `CHANNEL_IDS` | Comma-separated channel IDs to post alerts in (or single `CHANNEL_ID`) |
 | `REALM_NAME` | Realm name exactly as shown on whenbuff.com (e.g. `Doomhowl`) |
+| `ICON_BASE_URL` | Base URL for icon images, e.g. `https://raw.githubusercontent.com/you/WorldBuffTracker/main` |
 | `ALERT_MINUTES` | Minutes before a buff to send an alert (default: `15`) |
 | `SUMMARY_INTERVAL` | How often to post a summary, in minutes (default: `30`) |
 
 ### 4. Invite the bot to your server
 
-In the Developer Portal go to **OAuth2 → URL Generator**, select the `bot` and `applications.commands` scopes, and enable the **Send Messages** and **Embed Links** permissions. Open the generated URL to invite the bot.
+In the Developer Portal go to **OAuth2 → URL Generator**, select the `bot` and `applications.commands` scopes, and enable the following permissions:
 
-Make sure the bot has **Send Messages** and **Embed Links** permissions in the target channel.
+- **Send Messages**
+- **Embed Links**
+
+Open the generated URL to invite the bot, then make sure it has **Send Messages** and **Embed Links** in each target channel.
 
 ### 5. Test the scraper
 
@@ -66,7 +71,7 @@ Make sure the bot has **Send Messages** and **Embed Links** permissions in the t
 python debug_scraper.py
 ```
 
-This saves a screenshot and page dump to `debug/` so you can confirm realm selection is working before starting the bot.
+This saves a screenshot and page dump to `debug/` so you can confirm realm selection and buff parsing are working before starting the bot.
 
 ### 6. Run the bot
 
@@ -78,31 +83,19 @@ python bot.py
 
 | Command | Description |
 |---|---|
-| `/buffs` | Show the current buff timer for your realm |
+| `/buffs` | Show all upcoming buff timers for today |
 | `/channel add <#channel>` | Add a channel to receive alerts and summaries |
 | `/channel remove <#channel>` | Remove a channel |
 | `/channel list` | List all configured channels |
 | `/config check <seconds>` | Set how often the bot checks for imminent buffs (min 30s) |
 | `/config summary <minutes>` | Set how often the bot posts a summary (min 5 min) |
-| `/config show` | Display current settings including all channels (only visible to you) |
+| `/config show` | Display current settings (only visible to you) |
 
-Interval settings are saved to `settings.json` and restored on restart.
+All interval and channel settings are saved to `settings.json` and restored on restart.
 
-## Icon Mapping
+## Icon
 
-Icons are matched by buff name substring. To add or change an icon, edit the `BUFF_ICONS` dict near the top of `bot.py`:
-
-```python
-BUFF_ICONS: dict[str, str] = {
-    "zul'gurub": "zulgurub.png",
-    "onyxia":    "onyxia.png",
-    "rend":      "rend.png",
-    "alliance":  "alliance.png",
-    "horde":     "horde.png",
-}
-```
-
-Image files should be placed in the project root.
+Every embed shows a static Onyxia icon as a thumbnail. To change it, update `_thumbnail_url()` in `bot.py` to point to a different filename. The icon is served from `ICON_BASE_URL` set in `.env`.
 
 ## Project Structure
 
