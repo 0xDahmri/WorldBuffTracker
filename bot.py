@@ -94,10 +94,12 @@ async def _fetch() -> list[BuffTimer]:
             buffs = await scrape_buffs(config.REALM_NAME)
             if buffs:
                 return buffs
+        except asyncio.CancelledError:
+            raise  # bot is shutting down, stop immediately
         except Exception as exc:
             log.warning("Scrape attempt %d/3 failed: %s", attempt + 1, exc)
-        if attempt < 2:
-            await asyncio.sleep(15)
+            if attempt < 2:
+                await asyncio.sleep(15)
     log.error("All scrape attempts failed")
     return []
 
