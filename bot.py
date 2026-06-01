@@ -60,7 +60,9 @@ settings = _load_settings()
 # ---------------------------------------------------------------------------
 BUFF_ICONS: dict[str, str] = {
     "zul'gurub": "zulgurub.png",
+    "zg":        "zulgurub.png",
     "onyxia":    "onyxia.png",
+    "ony":       "onyxia.png",
     "rend":      "rend.png",
     "alliance":  "alliance.png",
     "horde":     "horde.png",

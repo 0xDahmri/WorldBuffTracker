@@ -99,29 +99,108 @@ async def _select_realm(page: Page, realm_name: str) -> bool:
     return False
 
 
+_ABBREV: dict[str, str] = {
+    "ZG": "Zul'Gurub",
+    "ONY": "Onyxia",
+    "REND": "Rend",
+    "NEF": "Nefarian",
+}
+
+
+def _expand(name: str) -> str:
+    return _ABBREV.get(name.strip().upper(), name.strip())
+
+
 async def _extract_buffs(page: Page, realm_name: str) -> list[BuffTimer]:
     """
-    Parse buff timers from whenbuff.com's page text.
+    Extract all upcoming buff timers for today from the calendar column.
 
-    The site shows one live countdown in the form:
-        "Next buff is {Name}\nin\n{HH:MM:SS}"
-
-    We parse that directly from the rendered body text.
+    Strategy:
+      1. Find today's day column in the DOM (by CSS class or orange border highlight).
+      2. Parse "HH:MM - BuffName" entries from that column only.
+      3. Fall back to the site's "Next buff is X in HH:MM:SS" headline if the
+         calendar column can't be identified.
     """
-    text = await page.inner_text("body")
+    calendar_entries: list[dict] = await page.evaluate("""
+        () => {
+            const now = new Date();
+            let todayContainer = null;
+
+            // Attempt 1: common class names
+            todayContainer = document.querySelector(
+                '.today, .current, [class*="today"], [class*="current-day"], [class*="currentDay"]'
+            );
+
+            // Attempt 2: element with an orange/amber border (the highlighted day column)
+            if (!todayContainer) {
+                for (const el of document.querySelectorAll('div, td, li, section')) {
+                    const style = window.getComputedStyle(el);
+                    const bc = style.borderColor;
+                    if (!bc || bc === 'transparent' || bc === 'rgba(0, 0, 0, 0)') continue;
+                    const rgb = bc.match(/\\d+/g);
+                    if (!rgb || rgb.length < 3) continue;
+                    const [r, g, b] = [Number(rgb[0]), Number(rgb[1]), Number(rgb[2])];
+                    // Orange/amber: high red, moderate green, low blue
+                    if (r > 180 && g > 80 && g < 210 && b < 80) {
+                        todayContainer = el;
+                        break;
+                    }
+                }
+            }
+
+            if (!todayContainer) return [];
+
+            const seen = new Set();
+            const results = [];
+
+            for (const line of todayContainer.innerText.split('\\n')) {
+                const m = line.trim().match(/^(\\d{1,2}):(\\d{2})\\s*[-–]\\s*(.+)$/);
+                if (!m) continue;
+
+                const h = parseInt(m[1]);
+                const min = parseInt(m[2]);
+                const buffName = m[3].trim();
+                const key = `${h}:${min}-${buffName}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+
+                const buffDate = new Date(now);
+                buffDate.setHours(h, min, 0, 0);
+                const msUntil = buffDate.getTime() - now.getTime();
+                if (msUntil <= 0) continue; // already passed today
+
+                results.push({ buffName, secondsUntil: Math.floor(msUntil / 1000) });
+            }
+
+            return results.sort((a, b) => a.secondsUntil - b.secondsUntil);
+        }
+    """)
+
     buffs: list[BuffTimer] = []
 
-    # Primary: "Next buff is {Name} in {HH:MM:SS}" (newlines may separate tokens)
-    match = re.search(
-        r"Next buff is\s+(.+?)\s+in\s+(\d+:\d{2}:\d{2}|\d+:\d{2})",
-        text,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if match:
-        name = match.group(1).strip()
-        seconds = _parse_seconds(match.group(2).strip())
-        if seconds is not None:
-            buffs.append(BuffTimer(name=name, seconds_remaining=seconds, realm=realm_name))
+    for entry in calendar_entries:
+        buffs.append(BuffTimer(
+            name=_expand(entry["buffName"]),
+            seconds_remaining=entry["secondsUntil"],
+            realm=realm_name,
+        ))
+
+    # Fallback: primary countdown headline
+    if not buffs:
+        text = await page.inner_text("body")
+        match = re.search(
+            r"Next buff is\s+(.+?)\s+in\s+(\d+:\d{2}:\d{2}|\d+:\d{2})",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            seconds = _parse_seconds(match.group(2).strip())
+            if seconds is not None:
+                buffs.append(BuffTimer(
+                    name=match.group(1).strip(),
+                    seconds_remaining=seconds,
+                    realm=realm_name,
+                ))
 
     return buffs
 
