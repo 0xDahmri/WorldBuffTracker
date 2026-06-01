@@ -79,9 +79,12 @@ python bot.py
 | Command | Description |
 |---|---|
 | `/buffs` | Show the current buff timer for your realm |
+| `/channel add <#channel>` | Add a channel to receive alerts and summaries |
+| `/channel remove <#channel>` | Remove a channel |
+| `/channel list` | List all configured channels |
 | `/config check <seconds>` | Set how often the bot checks for imminent buffs (min 30s) |
 | `/config summary <minutes>` | Set how often the bot posts a summary (min 5 min) |
-| `/config show` | Display current settings (only visible to you) |
+| `/config show` | Display current settings including all channels (only visible to you) |
 
 Interval settings are saved to `settings.json` and restored on restart.
 

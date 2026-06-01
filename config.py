@@ -4,7 +4,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DISCORD_TOKEN: str = os.environ["DISCORD_TOKEN"]
-CHANNEL_ID: int = int(os.environ["CHANNEL_ID"])
+
+# Accepts comma-separated CHANNEL_IDS or legacy single CHANNEL_ID
+_raw = os.getenv("CHANNEL_IDS", os.getenv("CHANNEL_ID", ""))
+CHANNEL_IDS: list[int] = [int(x.strip()) for x in _raw.split(",") if x.strip()]
+
 REALM_NAME: str = os.environ["REALM_NAME"]
 ALERT_MINUTES: int = int(os.getenv("ALERT_MINUTES", "15"))
 SUMMARY_INTERVAL: int = int(os.getenv("SUMMARY_INTERVAL", "30"))

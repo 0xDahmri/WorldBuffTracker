@@ -3,6 +3,9 @@ World Buff Tracker Discord bot.
 
 Slash commands:
   /buffs                     Show current timer for the configured realm
+  /channel add <#channel>    Add a channel to post alerts in
+  /channel remove <#channel> Remove a channel
+  /channel list              Show all configured channels
   /config check <seconds>    Set how often the bot checks for imminent buffs
   /config summary <minutes>  Set how often the bot posts a summary
   /config show               Show current settings
@@ -32,8 +35,16 @@ SETTINGS_FILE = Path("settings.json")
 
 def _load_settings() -> dict:
     if SETTINGS_FILE.exists():
-        return json.loads(SETTINGS_FILE.read_text())
-    return {"check_interval": 60, "summary_interval": config.SUMMARY_INTERVAL}
+        data = json.loads(SETTINGS_FILE.read_text())
+        # Migrate old single channel_id key if present
+        if "channel_id" in data and "channel_ids" not in data:
+            data["channel_ids"] = [data.pop("channel_id")]
+        return data
+    return {
+        "check_interval": 60,
+        "summary_interval": config.SUMMARY_INTERVAL,
+        "channel_ids": config.CHANNEL_IDS,
+    }
 
 
 def _save_settings() -> None:
@@ -43,7 +54,7 @@ def _save_settings() -> None:
 settings = _load_settings()
 
 # ---------------------------------------------------------------------------
-# Icon mapping  –  edit filenames to match what you have in icons/
+# Icon mapping  –  edit filenames to match what you have in the project root
 # ---------------------------------------------------------------------------
 ICONS_DIR = Path(".")
 
@@ -85,6 +96,20 @@ async def _fetch() -> list[BuffTimer]:
         return []
 
 
+async def _broadcast(embed: discord.Embed, buff_name: str) -> None:
+    """Send an embed to every configured channel, attaching the buff icon each time."""
+    for channel_id in settings["channel_ids"]:
+        channel = bot.get_channel(channel_id)
+        if channel is None:
+            log.warning("Channel %s not found", channel_id)
+            continue
+        icon = _icon_for(buff_name)  # new File object per send
+        if icon:
+            await channel.send(file=icon, embed=embed)
+        else:
+            await channel.send(embed=embed)
+
+
 def _summary_embed(buffs: list[BuffTimer], title: str) -> discord.Embed:
     embed = discord.Embed(
         title=title,
@@ -112,27 +137,6 @@ def _alert_embed(buff: BuffTimer) -> discord.Embed:
     embed.set_thumbnail(url="attachment://buff_icon.png")
     return embed
 
-
-async def _send_embed(
-    dest,
-    embed: discord.Embed,
-    buff_name: str,
-    *,
-    followup: bool = False,
-) -> None:
-    """Send an embed, attaching the buff icon thumbnail if one exists."""
-    icon = _icon_for(buff_name)
-    if icon:
-        if followup:
-            await dest.send(file=icon, embed=embed)
-        else:
-            await dest.send(file=icon, embed=embed)
-    else:
-        if followup:
-            await dest.send(embed=embed)
-        else:
-            await dest.send(embed=embed)
-
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -140,7 +144,6 @@ async def _send_embed(
 async def on_ready() -> None:
     await tree.sync()
     log.info("Logged in as %s", bot.user)
-    # Apply persisted intervals before starting
     check_alerts.change_interval(seconds=settings["check_interval"])
     post_summary.change_interval(minutes=settings["summary_interval"])
     if not check_alerts.is_running():
@@ -149,7 +152,7 @@ async def on_ready() -> None:
         post_summary.start()
 
 # ---------------------------------------------------------------------------
-# Slash commands
+# /buffs
 # ---------------------------------------------------------------------------
 @tree.command(name="buffs", description="Show current world buff timers")
 async def cmd_buffs(interaction: discord.Interaction) -> None:
@@ -162,7 +165,55 @@ async def cmd_buffs(interaction: discord.Interaction) -> None:
     else:
         await interaction.followup.send(embed=embed)
 
+# ---------------------------------------------------------------------------
+# /channel
+# ---------------------------------------------------------------------------
+channel_group = app_commands.Group(name="channel", description="Manage channels the bot posts to")
+tree.add_command(channel_group)
 
+
+@channel_group.command(name="add", description="Add a channel for buff alerts and summaries")
+@app_commands.describe(channel="Channel to add")
+async def cmd_channel_add(interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+    if channel.id in settings["channel_ids"]:
+        await interaction.response.send_message(
+            f"{channel.mention} is already configured.", ephemeral=True
+        )
+        return
+    settings["channel_ids"].append(channel.id)
+    _save_settings()
+    await interaction.response.send_message(
+        f"Added {channel.mention} to buff alert channels.", ephemeral=True
+    )
+
+
+@channel_group.command(name="remove", description="Remove a channel from buff alerts")
+@app_commands.describe(channel="Channel to remove")
+async def cmd_channel_remove(interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+    if channel.id not in settings["channel_ids"]:
+        await interaction.response.send_message(
+            f"{channel.mention} is not configured.", ephemeral=True
+        )
+        return
+    settings["channel_ids"].remove(channel.id)
+    _save_settings()
+    await interaction.response.send_message(
+        f"Removed {channel.mention} from buff alert channels.", ephemeral=True
+    )
+
+
+@channel_group.command(name="list", description="Show all configured buff alert channels")
+async def cmd_channel_list(interaction: discord.Interaction) -> None:
+    ids = settings["channel_ids"]
+    if not ids:
+        await interaction.response.send_message("No channels configured.", ephemeral=True)
+        return
+    lines = "\n".join(f"<#{cid}>" for cid in ids)
+    await interaction.response.send_message(f"Posting to:\n{lines}", ephemeral=True)
+
+# ---------------------------------------------------------------------------
+# /config
+# ---------------------------------------------------------------------------
 config_group = app_commands.Group(name="config", description="Configure the buff tracker")
 tree.add_command(config_group)
 
@@ -201,8 +252,11 @@ async def cmd_config_summary(interaction: discord.Interaction, minutes: int) -> 
 
 @config_group.command(name="show", description="Show current bot settings")
 async def cmd_config_show(interaction: discord.Interaction) -> None:
+    ids = settings["channel_ids"]
+    channels_str = ", ".join(f"<#{cid}>" for cid in ids) if ids else "None"
     embed = discord.Embed(title="Bot Settings", color=discord.Color.blurple())
     embed.add_field(name="Realm",            value=config.REALM_NAME,                      inline=False)
+    embed.add_field(name="Channels",         value=channels_str,                            inline=False)
     embed.add_field(name="Alert threshold",  value=f"{config.ALERT_MINUTES} min",          inline=True)
     embed.add_field(name="Check interval",   value=f"{settings['check_interval']}s",       inline=True)
     embed.add_field(name="Summary interval", value=f"{settings['summary_interval']} min",  inline=True)
@@ -216,19 +270,14 @@ async def check_alerts() -> None:
     buffs = await _fetch()
     if not buffs:
         return
-    channel = bot.get_channel(config.CHANNEL_ID)
-    if channel is None:
-        log.warning("Alert channel %s not found", config.CHANNEL_ID)
-        return
     for buff in buffs:
         prev = _last_seen_seconds.get(buff.name)
-        # Reset alert state when the timer resets (buff went out, new cycle started)
         if prev is not None and buff.seconds_remaining > prev + 300:
             _alerted.discard(buff.name)
         if buff.is_imminent(config.ALERT_MINUTES) and buff.name not in _alerted:
             _alerted.add(buff.name)
             log.info("Alert: %s imminent (%s)", buff.name, buff.formatted_time)
-            await _send_embed(channel, _alert_embed(buff), buff.name)
+            await _broadcast(_alert_embed(buff), buff.name)
         _last_seen_seconds[buff.name] = buff.seconds_remaining
 
 
@@ -239,13 +288,10 @@ async def _before_alerts() -> None:
 
 @tasks.loop(minutes=30)
 async def post_summary() -> None:
-    channel = bot.get_channel(config.CHANNEL_ID)
-    if channel is None:
-        return
     buffs = await _fetch()
     embed = _summary_embed(buffs, "World Buff Summary")
     buff_name = buffs[0].name if buffs else ""
-    await _send_embed(channel, embed, buff_name)
+    await _broadcast(embed, buff_name)
     log.info("Summary posted (%d buffs)", len(buffs))
 
 
