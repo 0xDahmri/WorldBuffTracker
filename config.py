@@ -12,3 +12,7 @@ CHANNEL_IDS: list[int] = [int(x.strip()) for x in _raw.split(",") if x.strip()]
 REALM_NAME: str = os.environ["REALM_NAME"]
 ALERT_MINUTES: int = int(os.getenv("ALERT_MINUTES", "15"))
 SUMMARY_INTERVAL: int = int(os.getenv("SUMMARY_INTERVAL", "30"))
+
+# Base URL for buff icons, e.g. https://raw.githubusercontent.com/you/WorldBuffTracker/main
+# Leave empty to disable icons.
+ICON_BASE_URL: str = os.getenv("ICON_BASE_URL", "").rstrip("/")

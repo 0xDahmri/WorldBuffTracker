@@ -11,6 +11,7 @@ Slash commands:
   /config show               Show current settings
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -54,10 +55,9 @@ def _save_settings() -> None:
 settings = _load_settings()
 
 # ---------------------------------------------------------------------------
-# Icon mapping  –  edit filenames to match what you have in the project root
+# Icon mapping  –  filenames served from ICON_BASE_URL in .env
+# e.g. https://raw.githubusercontent.com/you/WorldBuffTracker/main
 # ---------------------------------------------------------------------------
-ICONS_DIR = Path(".")
-
 BUFF_ICONS: dict[str, str] = {
     "zul'gurub": "zulgurub.png",
     "onyxia":    "onyxia.png",
@@ -67,14 +67,14 @@ BUFF_ICONS: dict[str, str] = {
 }
 
 
-def _icon_for(buff_name: str) -> Optional[discord.File]:
-    """Return a fresh discord.File for the buff's icon, or None if not found."""
+def _icon_url(buff_name: str) -> Optional[str]:
+    """Return the icon URL for a buff, or None if ICON_BASE_URL is not set."""
+    if not config.ICON_BASE_URL:
+        return None
     lower = buff_name.lower()
     for key, filename in BUFF_ICONS.items():
         if key in lower or lower in key:
-            path = ICONS_DIR / filename
-            if path.exists():
-                return discord.File(str(path), filename="buff_icon.png")
+            return f"{config.ICON_BASE_URL}/{filename}"
     return None
 
 # ---------------------------------------------------------------------------
@@ -89,25 +89,27 @@ _last_seen_seconds: dict[str, int] = {}
 
 
 async def _fetch() -> list[BuffTimer]:
-    try:
-        return await scrape_buffs(config.REALM_NAME)
-    except Exception as exc:
-        log.exception("Scrape failed: %s", exc)
-        return []
+    for attempt in range(3):
+        try:
+            buffs = await scrape_buffs(config.REALM_NAME)
+            if buffs:
+                return buffs
+        except Exception as exc:
+            log.warning("Scrape attempt %d/3 failed: %s", attempt + 1, exc)
+        if attempt < 2:
+            await asyncio.sleep(15)
+    log.error("All scrape attempts failed")
+    return []
 
 
 async def _broadcast(embed: discord.Embed, buff_name: str) -> None:
-    """Send an embed to every configured channel, attaching the buff icon each time."""
+    """Send an embed to every configured channel."""
     for channel_id in settings["channel_ids"]:
         channel = bot.get_channel(channel_id)
         if channel is None:
             log.warning("Channel %s not found", channel_id)
             continue
-        icon = _icon_for(buff_name)  # new File object per send
-        if icon:
-            await channel.send(file=icon, embed=embed)
-        else:
-            await channel.send(embed=embed)
+        await channel.send(embed=embed)
 
 
 def _summary_embed(buffs: list[BuffTimer], title: str) -> discord.Embed:
@@ -123,7 +125,9 @@ def _summary_embed(buffs: list[BuffTimer], title: str) -> discord.Embed:
     for buff in sorted(buffs, key=lambda b: b.seconds_remaining):
         label = "🟢 Active now" if buff.seconds_remaining <= 0 else f"⏳ {buff.formatted_time}"
         embed.add_field(name=buff.name, value=label, inline=True)
-    embed.set_thumbnail(url="attachment://buff_icon.png")
+    url = _icon_url(buffs[0].name)
+    if url:
+        embed.set_thumbnail(url=url)
     return embed
 
 
@@ -134,7 +138,9 @@ def _alert_embed(buff: BuffTimer) -> discord.Embed:
         color=discord.Color.orange(),
         timestamp=datetime.now(timezone.utc),
     )
-    embed.set_thumbnail(url="attachment://buff_icon.png")
+    url = _icon_url(buff.name)
+    if url:
+        embed.set_thumbnail(url=url)
     return embed
 
 # ---------------------------------------------------------------------------
@@ -158,12 +164,7 @@ async def on_ready() -> None:
 async def cmd_buffs(interaction: discord.Interaction) -> None:
     await interaction.response.defer()
     buffs = await _fetch()
-    embed = _summary_embed(buffs, "World Buff Timers")
-    icon = _icon_for(buffs[0].name) if buffs else None
-    if icon:
-        await interaction.followup.send(file=icon, embed=embed)
-    else:
-        await interaction.followup.send(embed=embed)
+    await interaction.followup.send(embed=_summary_embed(buffs, "World Buff Timers"))
 
 # ---------------------------------------------------------------------------
 # /channel
@@ -277,7 +278,7 @@ async def check_alerts() -> None:
         if buff.is_imminent(config.ALERT_MINUTES) and buff.name not in _alerted:
             _alerted.add(buff.name)
             log.info("Alert: %s imminent (%s)", buff.name, buff.formatted_time)
-            await _broadcast(_alert_embed(buff), buff.name)
+            await _broadcast(_alert_embed(buff), buff.name)  # _broadcast ignores buff_name now but kept for consistency
         _last_seen_seconds[buff.name] = buff.seconds_remaining
 
 
