@@ -1,6 +1,6 @@
 # WorldBuffTracker
 
-A Discord bot that scrapes [whenbuff.com](https://www.whenbuff.com/) and posts world buff alerts and summaries for WoW Classic Hardcore realms.
+A Discord bot that pulls world buff schedules from the whenbuff.com API and posts alerts and summaries for WoW Classic Hardcore realms.
 
 ## Features
 
@@ -31,13 +31,6 @@ cd WorldBuffTracker
 python3 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-python -m playwright install chromium
-```
-
-On Debian based hosts, install the Chromium system libraries:
-
-```bash
-sudo apt-get install -y libasound2t64 fonts-unifont
 ```
 
 ### 3. Configure environment variables
@@ -71,7 +64,7 @@ Open the generated URL to invite the bot, then make sure it has **Send Messages*
 python debug_scraper.py
 ```
 
-This saves a screenshot and page dump to `debug/` so you can confirm realm selection and buff parsing are working before starting the bot.
+This calls the API and prints the upcoming buffs for your realm. The raw API response is saved to `debug/api_response.json`.
 
 ### 6. Run the bot
 
@@ -102,9 +95,9 @@ Every embed shows a static Onyxia icon as a thumbnail. To change it, update `_th
 ```
 WorldBuffTracker/
 ├── bot.py              # Discord bot, slash commands, background tasks
-├── scraper.py          # Playwright-based scraper for whenbuff.com
+├── scraper.py          # whenbuff.com API client
 ├── config.py           # Environment variable loading
-├── debug_scraper.py    # Standalone tool to test the scraper
+├── debug_scraper.py    # Standalone tool to test the API connection
 ├── requirements.txt
 ├── .env.example
 └── *.png               # Buff icon images
