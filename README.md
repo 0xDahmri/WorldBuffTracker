@@ -1,14 +1,12 @@
 # WorldBuffTracker
 
-A Discord bot that pulls world buff schedules from the whenbuff.com API and posts alerts and summaries for WoW Classic Hardcore realms.
+A Discord bot that pulls world buff schedules from the whenbuff.com API and posts 30-minute alerts for WoW Classic Hardcore realms.
 
 ## Features
 
-- **Imminent alerts** — pings your channel when a buff is going out within a configurable window
-- **Periodic summaries** — posts all of today's remaining buffs on a schedule
-- **`/buffs` command** — on-demand timer lookup showing all upcoming buffs today
-- **`/channel` commands** — manage multiple alert channels from Discord
-- **`/config` commands** — change check and summary intervals without restarting the bot
+- **30-minute alerts** — pings your channel when a buff is going out soon
+- **`/buffs` command** — on-demand timer lookup with US timezone clock times
+- **`/channel` commands** — manage alert channels from Discord
 - **Buff icon** — Onyxia icon thumbnail on every embed (served from `ICON_BASE_URL`)
 
 ## Requirements
@@ -46,17 +44,16 @@ nano .env
 | `CHANNEL_IDS` | Comma-separated channel IDs to post alerts in (or single `CHANNEL_ID`) |
 | `REALM_NAME` | Realm name exactly as shown on whenbuff.com (e.g. `Doomhowl`) |
 | `ICON_BASE_URL` | Base URL for icon images, e.g. `https://raw.githubusercontent.com/you/WorldBuffTracker/main` |
-| `ALERT_MINUTES` | Minutes before a buff to send an alert (default: `15`) |
-| `SUMMARY_INTERVAL` | How often to post a summary, in minutes (default: `30`) |
+| `ALERT_MINUTES` | Minutes before a buff to send an alert (default: `30`) |
 
 ### 4. Invite the bot to your server
 
-In the Developer Portal go to **OAuth2 → URL Generator**, select the `bot` and `applications.commands` scopes, and enable the following permissions:
+In the Developer Portal go to **OAuth2 → URL Generator**, select the `bot` and `applications.commands` scopes, and enable:
 
 - **Send Messages**
 - **Embed Links**
 
-Open the generated URL to invite the bot, then make sure it has **Send Messages** and **Embed Links** in each target channel.
+Open the generated URL to invite the bot, then make sure it has those permissions in each target channel.
 
 ### 5. Test the scraper
 
@@ -76,25 +73,22 @@ python bot.py
 
 | Command | Description |
 |---|---|
-| `/buffs` | Show all upcoming buff timers for today |
-| `/channel add <#channel>` | Add a channel to receive alerts and summaries |
+| `/buffs` | Show all upcoming buff timers for the next 24 hours |
+| `/channel add <#channel>` | Add a channel to receive alerts |
 | `/channel remove <#channel>` | Remove a channel |
 | `/channel list` | List all configured channels |
-| `/config check <seconds>` | Set how often the bot checks for imminent buffs (min 30s) |
-| `/config summary <minutes>` | Set how often the bot posts a summary (min 5 min) |
-| `/config show` | Display current settings (only visible to you) |
 
-All interval and channel settings are saved to `settings.json` and restored on restart.
+Channel settings are saved to `settings.json` and restored on restart.
 
 ## Icon
 
-Every embed shows a static Onyxia icon as a thumbnail. To change it, update `_thumbnail_url()` in `bot.py` to point to a different filename. The icon is served from `ICON_BASE_URL` set in `.env`.
+Every embed shows a static Onyxia icon as a thumbnail. It is served from `ICON_BASE_URL` set in `.env`.
 
 ## Project Structure
 
 ```
 WorldBuffTracker/
-├── bot.py              # Discord bot, slash commands, background tasks
+├── bot.py              # Discord bot, slash commands, alert task
 ├── scraper.py          # whenbuff.com API client
 ├── config.py           # Environment variable loading
 ├── debug_scraper.py    # Standalone tool to test the API connection
