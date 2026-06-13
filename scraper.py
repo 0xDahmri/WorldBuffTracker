@@ -4,7 +4,7 @@ No browser required — a single httpx request with browser-like headers.
 
 API: https://api.whenbuff.com/buffs?server=<realm>&from_date=DD/MM/YYYY&to_date=DD/MM/YYYY
 Returns a list of objects: { buff_type, buff_faction, buff_date: "DD/MM/YYYY-HH:MM" }
-Dates are in UTC.
+Dates are in UTC-3 (API server local time).
 """
 
 import json
@@ -16,6 +16,8 @@ from typing import Optional
 import httpx
 
 API_URL = "https://api.whenbuff.com/buffs"
+API_TZ = timezone(timedelta(hours=-3))  # whenbuff API returns times in UTC-3
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -33,6 +35,7 @@ class BuffTimer:
     name: str
     seconds_remaining: int
     realm: str
+    buff_time_utc: datetime  # timezone-aware UTC datetime of the buff
 
     @property
     def formatted_time(self) -> str:
@@ -51,15 +54,13 @@ async def scrape_buffs(
     debug_dir: Optional[Path] = None,
     window_hours: int = 24,
 ) -> list[BuffTimer]:
-    """
-    Return upcoming buff timers for the given realm within the next window_hours.
-    Buff dates from the API are treated as UTC.
-    """
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    now_api = now_utc.astimezone(API_TZ)
+
     params = {
         "server": realm_name,
-        "from_date": now.strftime("%d/%m/%Y"),
-        "to_date": (now + timedelta(days=2)).strftime("%d/%m/%Y"),
+        "from_date": (now_api - timedelta(days=1)).strftime("%d/%m/%Y"),
+        "to_date": (now_api + timedelta(days=2)).strftime("%d/%m/%Y"),
     }
 
     async with httpx.AsyncClient(headers=HEADERS, timeout=10) as client:
@@ -75,25 +76,27 @@ async def scrape_buffs(
         print(f"[debug] API returned {len(data)} entries")
         print(f"[debug] Saved to {debug_dir.resolve()}/api_response.json")
 
-    cutoff = now + timedelta(hours=window_hours)
+    cutoff = now_utc + timedelta(hours=window_hours)
     buffs: list[BuffTimer] = []
 
     for entry in data:
         try:
             buff_dt = datetime.strptime(entry["buff_date"], "%d/%m/%Y-%H:%M").replace(
-                tzinfo=timezone.utc
+                tzinfo=API_TZ
             )
         except (KeyError, ValueError):
             continue
 
-        seconds = (buff_dt - now).total_seconds()
-        if seconds <= 0 or buff_dt > cutoff:
+        buff_dt_utc = buff_dt.astimezone(timezone.utc)
+        seconds = (buff_dt_utc - now_utc).total_seconds()
+        if seconds <= 0 or buff_dt_utc > cutoff:
             continue
 
         buffs.append(BuffTimer(
             name=entry.get("buff_type", "Unknown"),
             seconds_remaining=int(seconds),
             realm=realm_name,
+            buff_time_utc=buff_dt_utc,
         ))
 
     return sorted(buffs, key=lambda b: b.seconds_remaining)

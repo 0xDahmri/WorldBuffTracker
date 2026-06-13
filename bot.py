@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -24,6 +25,24 @@ from discord.ext import tasks
 
 import config
 from scraper import BuffTimer, scrape_buffs
+
+_US_TZS = [
+    ZoneInfo("America/New_York"),
+    ZoneInfo("America/Chicago"),
+    ZoneInfo("America/Denver"),
+    ZoneInfo("America/Los_Angeles"),
+]
+
+
+def _us_clock_times(buff: BuffTimer) -> str:
+    parts = []
+    for tz in _US_TZS:
+        local = buff.buff_time_utc.astimezone(tz)
+        h = local.hour % 12 or 12
+        ampm = "AM" if local.hour < 12 else "PM"
+        abbr = local.strftime("%Z")
+        parts.append(f"{h}:{local.strftime('%M')} {ampm} {abbr}")
+    return " · ".join(parts)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -109,7 +128,8 @@ def _summary_embed(buffs: list[BuffTimer], title: str) -> discord.Embed:
         return embed
     for buff in sorted(buffs, key=lambda b: b.seconds_remaining):
         label = "🟢 Active now" if buff.seconds_remaining <= 0 else f"⏳ {buff.formatted_time}"
-        embed.add_field(name=buff.name, value=label, inline=True)
+        clock = _us_clock_times(buff)
+        embed.add_field(name=buff.name, value=f"{label}\n{clock}", inline=False)
     url = _thumbnail_url()
     if url:
         embed.set_thumbnail(url=url)
@@ -117,9 +137,10 @@ def _summary_embed(buffs: list[BuffTimer], title: str) -> discord.Embed:
 
 
 def _alert_embed(buff: BuffTimer) -> discord.Embed:
+    clock = _us_clock_times(buff)
     embed = discord.Embed(
         title=f"⚠️ {buff.name} going out soon!",
-        description=f"Realm: **{buff.realm}**\nTime remaining: **{buff.formatted_time}**",
+        description=f"Realm: **{buff.realm}**\nTime remaining: **{buff.formatted_time}**\n{clock}",
         color=discord.Color.orange(),
         timestamp=datetime.now(timezone.utc),
     )
