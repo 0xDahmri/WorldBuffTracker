@@ -4,7 +4,7 @@ No browser required — a single httpx request with browser-like headers.
 
 API: https://api.whenbuff.com/buffs?server=<realm>&from_date=DD/MM/YYYY&to_date=DD/MM/YYYY
 Returns a list of objects: { buff_type, buff_faction, buff_date: "DD/MM/YYYY-HH:MM" }
-Dates are in UTC-3 (API server local time).
+Dates are in UTC-6 (API server local time).
 """
 
 import json
@@ -16,7 +16,7 @@ from typing import Optional
 import httpx
 
 API_URL = "https://api.whenbuff.com/buffs"
-API_TZ = timezone(timedelta(hours=-3))  # whenbuff API returns times in UTC-3
+API_TZ = timezone(timedelta(hours=-6))  # whenbuff API returns times in UTC-6
 
 HEADERS = {
     "User-Agent": (
