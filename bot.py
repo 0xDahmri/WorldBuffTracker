@@ -11,7 +11,7 @@ Slash commands:
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Settings  (persisted to settings.json so they survive restarts)
+# Settings  (persisted to settings.json)
 # ---------------------------------------------------------------------------
 SETTINGS_FILE = Path("settings.json")
 
@@ -37,8 +37,11 @@ def _load_settings() -> dict:
         data = json.loads(SETTINGS_FILE.read_text())
         if "channel_id" in data and "channel_ids" not in data:
             data["channel_ids"] = [data.pop("channel_id")]
-        return {"channel_ids": data.get("channel_ids", config.CHANNEL_IDS)}
-    return {"channel_ids": config.CHANNEL_IDS}
+        return {
+            "channel_ids": data.get("channel_ids", config.CHANNEL_IDS),
+            "alerted": data.get("alerted", []),
+        }
+    return {"channel_ids": config.CHANNEL_IDS, "alerted": []}
 
 
 def _save_settings() -> None:
@@ -74,6 +77,46 @@ def _thumbnail_url() -> Optional[str]:
     return f"{config.ICON_BASE_URL}/onyxia.png"
 
 
+def _alert_key(buff: BuffTimer) -> str:
+    """Unique key per buff occurrence, based on its actual UTC time."""
+    return f"{buff.name}@{buff.buff_time_utc.strftime('%Y%m%d%H%M')}"
+
+
+def _group_key(group: list[BuffTimer]) -> str:
+    return "|".join(sorted(_alert_key(b) for b in group))
+
+
+def _clean_alerted() -> None:
+    """Drop keys for buff occurrences that passed more than 2 hours ago."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+    fresh = []
+    for key in settings["alerted"]:
+        try:
+            timestamps = [part.split("@")[1] for part in key.split("|") if "@" in part]
+            if any(
+                datetime.strptime(ts[:12], "%Y%m%d%H%M").replace(tzinfo=timezone.utc) > cutoff
+                for ts in timestamps
+            ):
+                fresh.append(key)
+        except Exception:
+            pass
+    settings["alerted"] = fresh
+
+
+def _group_imminent(buffs: list[BuffTimer]) -> list[list[BuffTimer]]:
+    """Group buffs within 10 minutes of each other into a single alert."""
+    imminent = [b for b in buffs if b.is_imminent(config.ALERT_MINUTES)]
+    if not imminent:
+        return []
+    groups: list[list[BuffTimer]] = [[imminent[0]]]
+    for buff in imminent[1:]:
+        if buff.seconds_remaining - groups[-1][0].seconds_remaining <= 600:
+            groups[-1].append(buff)
+        else:
+            groups.append([buff])
+    return groups
+
+
 def _buffs_embed(buffs: list[BuffTimer], title: str) -> discord.Embed:
     embed = discord.Embed(
         title=title,
@@ -86,23 +129,37 @@ def _buffs_embed(buffs: list[BuffTimer], title: str) -> discord.Embed:
         return embed
     for buff in buffs:
         label = "🟢 Active now" if buff.seconds_remaining <= 0 else f"⏳ {buff.formatted_time}"
-        clock = _us_clock_times(buff)
-        embed.add_field(name=buff.name, value=f"{label}\n{clock}", inline=False)
+        embed.add_field(name=buff.name, value=f"{label}\n{_us_clock_times(buff)}", inline=False)
     url = _thumbnail_url()
     if url:
         embed.set_thumbnail(url=url)
     return embed
 
 
-def _alert_embed(buff: BuffTimer) -> discord.Embed:
-    clock = _us_clock_times(buff)
-    embed = discord.Embed(
-        title=f"⚠️ {buff.name} in {buff.formatted_time}!",
-        description=f"Realm: **{buff.realm}**\n{clock}",
-        color=discord.Color.orange(),
-        timestamp=datetime.now(timezone.utc),
-    )
+def _alert_embed(group: list[BuffTimer]) -> discord.Embed:
     url = _thumbnail_url()
+    if len(group) == 1:
+        buff = group[0]
+        embed = discord.Embed(
+            title=f"⚠️ {buff.name} in {buff.formatted_time}!",
+            description=f"Realm: **{buff.realm}**\n{_us_clock_times(buff)}",
+            color=discord.Color.orange(),
+            timestamp=datetime.now(timezone.utc),
+        )
+    else:
+        names = " + ".join(b.name for b in group)
+        embed = discord.Embed(
+            title=f"⚠️ Double buff! {names} dropping soon!",
+            description=f"Realm: **{group[0].realm}**",
+            color=discord.Color.red(),
+            timestamp=datetime.now(timezone.utc),
+        )
+        for buff in group:
+            embed.add_field(
+                name=f"{buff.name} — {buff.formatted_time}",
+                value=_us_clock_times(buff),
+                inline=False,
+            )
     if url:
         embed.set_thumbnail(url=url)
     return embed
@@ -113,9 +170,6 @@ def _alert_embed(buff: BuffTimer) -> discord.Embed:
 intents = discord.Intents.default()
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
-
-_alerted: set[str] = set()
-_last_seen_seconds: dict[str, int] = {}
 
 
 async def _fetch() -> list[BuffTimer]:
@@ -196,24 +250,35 @@ async def cmd_channel_list(interaction: discord.Interaction) -> None:
     if not ids:
         await interaction.response.send_message("No channels configured.", ephemeral=True)
         return
-    lines = "\n".join(f"<#{cid}>" for cid in ids)
-    await interaction.response.send_message(f"Alert channels:\n{lines}", ephemeral=True)
+    await interaction.response.send_message(
+        "Alert channels:\n" + "\n".join(f"<#{cid}>" for cid in ids),
+        ephemeral=True,
+    )
 
 # ---------------------------------------------------------------------------
-# Background task — alert only
+# Background task
 # ---------------------------------------------------------------------------
 @tasks.loop(seconds=60)
 async def check_alerts() -> None:
     buffs = await _fetch()
-    for buff in buffs:
-        prev = _last_seen_seconds.get(buff.name)
-        if prev is not None and buff.seconds_remaining > prev + 300:
-            _alerted.discard(buff.name)
-        if buff.is_imminent(config.ALERT_MINUTES) and buff.name not in _alerted:
-            _alerted.add(buff.name)
-            log.info("Alert: %s in %s", buff.name, buff.formatted_time)
-            await _broadcast(_alert_embed(buff))
-        _last_seen_seconds[buff.name] = buff.seconds_remaining
+    if not buffs:
+        return
+
+    _clean_alerted()
+    alerted = set(settings["alerted"])
+    changed = False
+
+    for group in _group_imminent(buffs):
+        key = _group_key(group)
+        if key not in alerted:
+            alerted.add(key)
+            changed = True
+            log.info("Alert: %s", " + ".join(b.name for b in group))
+            await _broadcast(_alert_embed(group))
+
+    if changed:
+        settings["alerted"] = list(alerted)
+        _save_settings()
 
 
 @check_alerts.before_loop
