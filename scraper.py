@@ -18,6 +18,10 @@ import httpx
 API_URL = "https://api.whenbuff.com/buffs"
 API_TZ = timezone(timedelta(hours=-6))  # whenbuff API returns times in UTC-6
 
+NAME_MAP = {
+    "Zulgurub": "Zul'Gurub",
+}
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -92,8 +96,9 @@ async def scrape_buffs(
         if seconds <= 0 or buff_dt_utc > cutoff:
             continue
 
+        raw_name = entry.get("buff_type", "Unknown")
         buffs.append(BuffTimer(
-            name=entry.get("buff_type", "Unknown"),
+            name=NAME_MAP.get(raw_name, raw_name),
             seconds_remaining=int(seconds),
             realm=realm_name,
             buff_time_utc=buff_dt_utc,
